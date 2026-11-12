@@ -6,6 +6,7 @@ import logging
 import queue
 import shutil
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -25,7 +26,6 @@ AUDIO_EXT = {"mp3", "wav", "m4a", "flac", "ogg", "opus", "aac", "webm", "mp4"}
 MAX_UPLOAD = 300 * 1024 * 1024
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
-app = FastAPI(title="Woodshed", version=__version__)
 _jobs: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
 
 
@@ -63,14 +63,18 @@ def _worker() -> None:
             library.update_song(d, status="error", error=f"{type(e).__name__}: {e}"[:500])
 
 
-@app.on_event("startup")
-def _startup() -> None:
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
     # songs left mid-import by a previous run can never finish: say so instead of spinning forever
     for song in library.list_songs():
         if song["status"] in ("queued", "processing"):
             library.update_song(library.song_dir(song["id"]), status="error",
                                 error="Import was interrupted (the app was restarted). Delete it and import again.")
     threading.Thread(target=_worker, daemon=True, name="import-worker").start()
+    yield
+
+
+app = FastAPI(title="Woodshed", version=__version__, lifespan=_lifespan)
 
 
 def _dir(song_id: str) -> Path:

@@ -36,7 +36,9 @@ def fetch(url: str, out_dir: str | Path) -> dict:
             path = Path(ydl.prepare_filename(info))
     except Exception as e:  # yt_dlp raises its own DownloadError with a long message
         msg = str(e).replace("ERROR: ", "").strip().splitlines()[0]
-        raise RuntimeError(f"Could not download from that link: {msg}") from e
+        msg = msg.split(". Use --cookies")[0].split(". See ")[0][:240]
+        raise RuntimeError(f"Could not download from that link: {msg}. "
+                           "If this keeps happening, download the audio yourself and import the file.") from e
     guess_artist, guess_title = clean_title(info.get("title") or "")
     return {
         "path": str(path),
