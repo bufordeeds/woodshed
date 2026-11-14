@@ -102,7 +102,7 @@ def process(d: Path, audio_path: Path, *, progress: Progress | None = None, lyri
 
     step("finding_beats", 70)
     t = time.time()
-    beats, downbeats, beat_backend = beats_mod.track_beats(mix, SAMPLE_RATE)
+    beats, downbeats, beat_backend = beats_mod.track_beats(mix, SAMPLE_RATE, hits)
     timings["beats"] = time.time() - t
 
     chart = {
@@ -152,4 +152,31 @@ def process(d: Path, audio_path: Path, *, progress: Progress | None = None, lyri
     timings["total"] = time.time() - t_all
     chart["timings_s"] = {k: round(v, 1) for k, v in timings.items()}
     library.write_chart(d, chart, draft=True)
+    return chart
+
+
+def rebar(d: Path) -> dict:
+    """Re-detect beats and bar lines from the original audio. Stems, drum hits, chords and lyrics are kept.
+
+    Both the working chart and the draft get the new beats; the chart's bar/tempo settings are cleared
+    because they described the old beats. Returns the working chart.
+    """
+    from . import beats as beats_mod
+
+    audio = next(d.glob("original.*"), None)
+    if audio is None:
+        raise AudioError("The original recording is missing from this song's folder")
+    chart = library.read_chart(d)
+    beats, downbeats, backend = beats_mod.track_beats(load_audio(audio), SAMPLE_RATE, chart.get("drums") or [])
+    if not beats:
+        raise AudioError("No beats were found")
+    draft_path = d / "chart.draft.json"
+    draft = json.loads(draft_path.read_text()) if draft_path.exists() else None
+    for c in (chart, draft):
+        if c is not None:
+            c["beats"], c["downbeats"], c["meter"] = beats, downbeats, {}
+            c.setdefault("models", {})["beats"] = backend
+    if draft is not None:
+        draft_path.write_text(json.dumps(draft, indent=1))
+    library.write_chart(d, chart)
     return chart

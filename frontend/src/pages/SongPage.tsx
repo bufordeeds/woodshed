@@ -3,6 +3,7 @@ import { api, STEMS, type Chart, type ChartBundle, type Derived, type Kit, type 
 import { Judge } from '../lib/judge'
 import { midi } from '../lib/midi'
 import { PlayerEngine, loadAudio } from '../lib/player'
+import { copyBar } from '../lib/pattern'
 import { loadSettings, saveSettings, type Settings } from '../lib/settings'
 import { Grid, formatTime } from '../lib/timing'
 import ChordEditor from '../components/ChordEditor'
@@ -101,6 +102,7 @@ function Room({ songId }: { songId: string }) {
 
   const [mode, setMode] = useState<'play' | 'edit'>('play')
   const [tab, setTab] = useState<EditTab>('bars')
+  const [copy, setCopy] = useState({ source: '', from: '', to: '' })
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(100)
   const [click, setClick] = useState(false)
@@ -248,6 +250,12 @@ function Room({ songId }: { songId: string }) {
   const revert = async () => {
     if (!window.confirm('Throw away every edit and go back to the first automatic draft?')) return
     const bundle = await api.revert(songId)
+    adopt(bundle, await api.musicxml(songId))
+  }
+
+  const rebar = async () => {
+    if (!window.confirm('Find the beats and bar lines again from the recording? Your drum hits, chords and lyrics are kept; the bar and tempo settings are reset.')) return
+    const bundle = await api.rebar(songId)
     adopt(bundle, await api.musicxml(songId))
   }
 
@@ -527,9 +535,29 @@ function Room({ songId }: { songId: string }) {
               <input type="checkbox" className="accent-amber-700" checked={audition} onChange={(e) => setAudition(e.target.checked)} data-testid="audition" />
               Tick on every charted note
             </label>
-            <button className={`${btn} ${off} ml-auto`} onClick={() => void revert()} data-testid="revert">Start over from the draft</button>
+            <button className={`${btn} ${off} ml-auto`} onClick={() => void rebar()} data-testid="rebar" title="Listen for the beats and bar lines again. Drum hits, chords and lyrics are kept.">Re-detect bars</button>
+            <button className={`${btn} ${off}`} onClick={() => void revert()} data-testid="revert">Start over from the draft</button>
           </div>
           {tab === 'bars' && <TempoPanel meter={work.meter} derived={derived} setMeter={(meter) => edit({ ...work, meter })} />}
+          {tab === 'drums' && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-stone-700" data-testid="copy-bar">
+              <span title="Get one bar of the groove right, then stamp it over the bars that should match. The drums already in those bars are replaced. Undo works.">Copy bar</span>
+              <input className="w-16 border border-stone-300 rounded px-2 py-1.5" inputMode="numeric" placeholder="bar" value={copy.source} onChange={(e) => setCopy({ ...copy, source: e.target.value })} data-testid="copy-source" />
+              <span>onto bars</span>
+              <input className="w-16 border border-stone-300 rounded px-2 py-1.5" inputMode="numeric" placeholder="from" value={copy.from} onChange={(e) => setCopy({ ...copy, from: e.target.value })} data-testid="copy-from" />
+              <span>–</span>
+              <input className="w-16 border border-stone-300 rounded px-2 py-1.5" inputMode="numeric" placeholder="to" value={copy.to} onChange={(e) => setCopy({ ...copy, to: e.target.value })} data-testid="copy-to" />
+              <button
+                className={`${btn} ${off}`}
+                disabled={!(+copy.source >= 1 && +copy.from >= 1 && +copy.to >= 1)}
+                onClick={() => edit({ ...work, drums: copyBar(work.drums, derived.bars, +copy.source, +copy.from, +copy.to) })}
+                data-testid="copy-apply"
+              >
+                Copy
+              </button>
+              <span className="text-stone-500">Replaces the drums in those bars. Undo brings them back.</span>
+            </div>
+          )}
           {tab === 'drums' && (
             <LaneEditor
               hits={work.drums}

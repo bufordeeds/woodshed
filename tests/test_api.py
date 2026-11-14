@@ -80,3 +80,26 @@ def test_interrupted_imports_are_flagged_on_startup(tmp_path, monkeypatch):
         s = c.get(f"/api/songs/{song['id']}").json()
     assert s["status"] == "error" and "interrupted" in s["error"]
     assert json.loads((tmp_path / song["id"] / "song.json").read_text())["status"] == "error"
+
+
+def test_rebar_keeps_hits_and_resets_meter(client, monkeypatch):
+    import numpy as np
+
+    from woodshed import beats, library, pipeline
+
+    sid = client.song_id
+    d = library.song_dir(sid)
+    assert client.post(f"/api/songs/{sid}/chart/rebar").status_code == 422   # no original recording
+    (d / "original.wav").write_bytes(b"")
+    monkeypatch.setattr(pipeline, "load_audio", lambda p: np.zeros((2, 44100)))
+    new = [round(0.8 + 0.6 * i, 3) for i in range(12)]
+    monkeypatch.setattr(beats, "track_beats", lambda audio, sr, hits=None: (new, new[::3], "fake"))
+    chart = client.get(f"/api/songs/{sid}/chart").json()["chart"]
+    chart["meter"] = {"shift": 1}
+    chart["drums"].append({"t": 2.0, "d": "kick"})
+    client.put(f"/api/songs/{sid}/chart", json=chart)
+    b = client.post(f"/api/songs/{sid}/chart/rebar").json()
+    assert b["chart"]["beats"] == new and b["chart"]["meter"] == {} and len(b["chart"]["drums"]) == 3
+    assert b["derived"]["time_signature"][0] == 3 and b["chart"]["models"]["beats"] == "fake"
+    draft = client.post(f"/api/songs/{sid}/chart/revert").json()["chart"]
+    assert draft["beats"] == new and len(draft["drums"]) == 2

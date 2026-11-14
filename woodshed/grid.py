@@ -70,16 +70,35 @@ def _cost(fracs, div: int) -> float:
     return sum(min(abs(f - j / div) for j in range(div + 1)) for f in fracs)
 
 
-def _locate(g: np.ndarray, times) -> list[tuple[int, float]]:
-    """(beat index, fraction of beat) for every time, with late hits rolled into the next beat."""
-    out = []
+_PICKUP_GAP_S = 0.07  # two hits of one drum closer than this are one stroke heard twice, not a pickup
+
+
+def _locate(g: np.ndarray, times, drums=None) -> tuple[list[tuple[int, float]], set[int]]:
+    """(beat index, fraction of beat) for every time, plus the beats that hold a pickup.
+
+    A hit just before a beat is normally that beat played early, so it rolls into the next beat.
+    When the same drum is also struck on that next beat it is a note of its own (a pickup, e.g. the
+    kick just before 1): it stays where it is and its beat is flagged for a finer subdivision.
+    """
+    raw = []
     for t in times:
         k = int(np.clip(np.searchsorted(g, t, side="right") - 1, 0, len(g) - 2))
-        frac = (t - g[k]) / (g[k + 1] - g[k])
+        raw.append((k, (t - g[k]) / (g[k + 1] - g[k])))
+    on_beat: dict[tuple[int, str], float] = {}
+    if drums is not None:
+        for (k, frac), t, d in zip(raw, times, drums):
+            if frac < 1 - _ROLLOVER:
+                on_beat[(k, d)] = min(t, on_beat.get((k, d), t))
+    out, pickups = [], set()
+    for i, ((k, frac), t) in enumerate(zip(raw, times)):
         if frac >= _ROLLOVER and k < len(g) - 2:
-            k, frac = k + 1, 0.0
+            landing = on_beat.get((k + 1, drums[i])) if drums is not None else None
+            if landing is not None and landing - t >= _PICKUP_GAP_S:
+                pickups.add(k)
+            else:
+                k, frac = k + 1, 0.0
         out.append((k, float(np.clip(frac, 0.0, 0.999))))
-    return out
+    return out, pickups
 
 
 def derive(chart: dict) -> dict:
@@ -129,7 +148,7 @@ def derive(chart: dict) -> dict:
         g.append(g[-1] + tail)
     g = np.asarray(g)
 
-    located = _locate(g, times)
+    located, pickups = _locate(g, times, [h["d"] for h in hits])
     per_beat: dict[int, list[int]] = {}
     for i, (k, _) in enumerate(located):
         per_beat.setdefault(k, []).append(i)
@@ -171,6 +190,9 @@ def derive(chart: dict) -> dict:
                 d = base
             divs[k] = d
 
+    for k in pickups:  # 32nd notes, so the pickup is not folded into the beat it leads to
+        divs[k] = 12 if compound else 8
+
     # notes: hits that land on the same slot with the same drum are one notated note
     slots: dict[tuple[int, int, str], dict] = {}
     for k, idxs in per_beat.items():
@@ -178,8 +200,10 @@ def derive(chart: dict) -> dict:
         ss = [min(int(round(located[i][1] * div)), div - 1) for i in idxs]
         if not compound and div == 3 and not any(ss):
             div = 4
-        if compound and div == 6 and not any(s % 2 for s in ss):
-            div, ss = 3, [s // 2 for s in ss]
+        while div in (6, 8, 12) and not any(s % 2 for s in ss):
+            if div == 6 and not compound:
+                break
+            div, ss = div // 2, [s // 2 for s in ss]
         divs[k] = div
         for i, s in zip(idxs, ss):
             n = slots.setdefault((k, s, hits[i]["d"]), {"k": k, "slot": s, "div": div, "d": hits[i]["d"], "hits": []})

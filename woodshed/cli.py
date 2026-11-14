@@ -20,6 +20,9 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--title", default="")
     i.add_argument("--artist", default="")
     i.add_argument("--no-lyrics", action="store_true")
+    r = sub.add_parser("rebar", help="find beats and bar lines again for songs already imported")
+    r.add_argument("songs", nargs="*", help="song ids (folder names in the library)")
+    r.add_argument("--all", action="store_true", help="every song in the library")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -51,6 +54,21 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(chart['drums'])} drum hits ({', '.join(f'{k} {v}' for k, v in sorted(counts.items()))}), "
               f"{len(chart['chords'])} chord changes (key {chart['key'] or '?'}), "
               f"lyrics: {chart['lyrics']['source']} ({len(chart['lyrics']['lines'])} lines)")
+        return 0
+
+    if a.cmd == "rebar":
+        from . import library, pipeline
+        from .grid import derive
+
+        ids = [s["id"] for s in library.list_songs() if s.get("status") == "ready"] if a.all else a.songs
+        if not ids:
+            print("error: name a song id or pass --all", file=sys.stderr)
+            return 2
+        for sid in ids:
+            chart = pipeline.rebar(library.song_dir(sid))
+            dv = derive(chart)
+            print(f"{sid}: {dv['time_signature'][0]}/{dv['time_signature'][1]} at ~{dv['tempo_bpm']} BPM, "
+                  f"{len(dv['bars'])} bars ({chart['models']['beats']})")
         return 0
 
     import uvicorn
