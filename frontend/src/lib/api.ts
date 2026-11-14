@@ -128,6 +128,7 @@ export const api = {
   preview: (id: string, chart: Chart) =>
     post(`/api/songs/${id}/chart/preview`, chart).then((r) => json<{ chart: Chart; derived: Derived; musicxml: string }>(r)),
   revert: (id: string) => post(`/api/songs/${id}/chart/revert`).then((r) => json<ChartBundle>(r)),
+  rebar: (id: string) => post(`/api/songs/${id}/chart/rebar`).then((r) => json<ChartBundle>(r)),
   musicxml: (id: string) => fetch(`/api/songs/${id}/score.musicxml`).then((r) => (r.ok ? r.text() : Promise.reject(new Error('No chart')))),
   peaks: (id: string) => fetch(`/api/songs/${id}/peaks`).then((r) => json<{ per_second: number; drums: number[]; vocals: number[] }>(r)),
   stemUrl: (id: string, name: StemName) => `/api/songs/${id}/stems/${name}`,

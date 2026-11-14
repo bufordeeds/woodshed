@@ -46,7 +46,7 @@ def test_shuffle_becomes_compound_time():
     d = derive(chart(bars=3, hits=hits))
     assert d["compound"] and d["time_signature"] == [12, 8] and d["qpb"] == 1.5
     assert {n["div"] for n in d["notes"]} == {3} and {n["slot"] for n in d["notes"]} == {0, 2}
-    assert measure_durations(to_musicxml(chart(bars=3, hits=hits), d)) == [4 * 18] * len(d["bars"])
+    assert measure_durations(to_musicxml(chart(bars=3, hits=hits), d)) == [4 * 3 * DIV // 2] * len(d["bars"])
 
 
 def test_tracker_counting_eighths_of_six_eight_is_regrouped():
@@ -55,7 +55,7 @@ def test_tracker_counting_eighths_of_six_eight_is_regrouped():
     d = derive(c)
     assert d["time_signature"] == [6, 8] and d["per_bar"] == 2 and d["compound"]
     assert len(d["bars"]) == 4 and d["auto"]
-    assert measure_durations(to_musicxml(c, d)) == [2 * 18] * 4
+    assert measure_durations(to_musicxml(c, d)) == [2 * 3 * DIV // 2] * 4
 
 
 def test_meter_overrides():
@@ -143,3 +143,74 @@ def test_title_cleanup():
     assert clean_title("Olivia Dean - A Couple Minutes (Official Video)") == ("Olivia Dean", "A Couple Minutes")
     assert clean_title("Some Song [Lyric Video]") == ("", "Some Song")
     assert is_url("https://youtu.be/abc") and not is_url("rm -rf /")
+
+
+def _pattern_hits(beats, per, kick_at, snare_at):
+    hits = []
+    for i, t in enumerate(beats):
+        if i % per in kick_at:
+            hits.append({"t": t, "d": "kick", "c": 0.9})
+        if i % per in snare_at:
+            hits.append({"t": t, "d": "snare", "c": 0.9})
+    return hits
+
+
+def test_downbeats_follow_the_drum_pattern():
+    from woodshed.beats import downbeats_from_hits
+
+    beats = [round(0.3 + 0.5 * i, 3) for i in range(64)]
+    # 4/4 whose bar starts on the tracker's third beat: kick on 1 and 3 (plus the "and" of 3), snare on 2 and 4
+    hits = _pattern_hits(beats, 4, {2, 0}, {3, 1}) + [{"t": beats[i] + 0.25, "d": "kick", "c": 0.9} for i in range(0, 64, 4)]
+    hits += [{"t": beats[i], "d": "cymbal", "c": 0.8} for i in range(2, 64, 16)]
+    db = downbeats_from_hits(beats, hits)
+    assert db[0] == beats[2] and db[1] == beats[6]
+    # 6/8 counted in eighth notes: kick on 1, snare on 4
+    db = downbeats_from_hits(beats, _pattern_hits(beats, 6, {1}, {4}))
+    assert db[0] == beats[1] and db[1] == beats[7]
+    # slow 6/8 with the kick on 1 and 4 as well (half the pattern repeats every 3 beats)
+    db = downbeats_from_hits(beats, _pattern_hits(beats, 6, {1, 4}, {4}))
+    assert db[0] == beats[1] and db[1] == beats[7]
+    # a waltz stays in three
+    db = downbeats_from_hits(beats, _pattern_hits(beats, 3, {2}, {0, 1}))
+    assert db[0] == beats[2] and db[1] == beats[5]
+    # nothing to go on
+    assert downbeats_from_hits(beats, []) is None
+
+
+def test_backbeat_only_tracking_is_doubled():
+    from woodshed.beats import double_if_backbeat, downbeats_from_hits
+
+    full = [round(0.2 + 0.5 * i, 3) for i in range(64)]          # the real beats
+    hits = _pattern_hits(full, 4, {0, 2}, {1, 3})
+    tracked = full[1::2]                                          # tracker tapped 2 and 4 only
+    doubled = double_if_backbeat(tracked, hits)
+    assert len(doubled) == 2 * len(tracked) - 1 and abs(doubled[1] - full[2]) < 1e-6
+    assert downbeats_from_hits(doubled, hits)[0] == full[2]       # bars start on a kick, not on the snare the tracker tapped
+    assert len(double_if_backbeat(full, hits)) == len(full)       # already right: left alone
+    # the same hit on every beat says nothing about bar length or where it starts
+    assert downbeats_from_hits(full, [{"t": t, "d": "snare", "c": 0.9} for t in full]) is None
+
+
+def test_kick_just_before_the_bar_is_its_own_note():
+    from woodshed.grid import derive
+    from woodshed.notation import to_musicxml
+
+    # slow 6/8 counted in dotted quarters (1.5 s): hats on every eighth, kick on 1, snare on 4, kick a 32nd before 1
+    beats = [round(1.0 + 1.5 * i, 3) for i in range(17)]
+    hits = []
+    for bar in range(8):
+        t0 = 1.0 + 3.0 * bar
+        hits += [{"t": round(t0 + 0.5 * e, 3), "d": "hihat", "c": 0.9} for e in range(6)]
+        hits += [{"t": t0, "d": "kick", "c": 0.9}, {"t": t0 + 1.5, "d": "snare", "c": 0.9}]
+        hits.append({"t": round(t0 + 3.0 - 0.125, 3), "d": "kick", "c": 0.5})
+    chart = {"duration_s": 26.0, "beats": beats, "downbeats": beats[::2], "meter": {"feel": "compound"}, "drums": hits}
+    dv = derive(chart)
+    assert dv["time_signature"] == [6, 8]
+    bar2 = sorted((n["beat"], n["slot"], n["div"]) for n in dv["notes"] if n["bar"] == 2 and n["d"] == "kick")
+    assert bar2 == [(0, 0, 3), (1, 11, 12)]
+    assert sum(n["d"] == "kick" for n in dv["notes"]) == 16           # none folded into the downbeat
+    xml = to_musicxml(chart, dv)
+    assert xml.count("<type>32nd</type>") == 7 and "<divisions>24</divisions>" in xml
+    # a hit only 30 ms ahead of the same drum is the same stroke, not a pickup
+    hits.append({"t": 3.97, "d": "kick", "c": 0.4})
+    assert sum(n["d"] == "kick" for n in derive(chart)["notes"]) == 16

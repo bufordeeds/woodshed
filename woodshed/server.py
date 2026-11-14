@@ -221,6 +221,19 @@ def revert_chart(song_id: str):
     return {"song": library.read_song(d), "chart": chart, "derived": derive(chart)}
 
 
+@app.post("/api/songs/{song_id}/chart/rebar")
+def rebar_chart(song_id: str):
+    """Find the beats and bar lines again from the recording (stems and drum hits are reused)."""
+    from . import pipeline
+
+    d = _ready(song_id)
+    try:
+        chart = pipeline.rebar(d)
+    except AudioError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"song": library.read_song(d), "chart": chart, "derived": derive(chart)}
+
+
 @app.get("/api/songs/{song_id}/score.musicxml")
 def musicxml(song_id: str, download: bool = False):
     d = _ready(song_id)

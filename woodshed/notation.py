@@ -15,14 +15,18 @@ import numpy as np
 from .grid import flat_beats
 from .kit import DRUMS, GM_NOTE, NOTATION
 
-DIV = 12  # divisions per quarter note
+DIV = 24  # divisions per quarter note
 
 # slot length -> (note type, dots) for each kind of beat; value = divisions per slot
 _TABLES = {
-    ("straight", 4): (3, {1: ("16th", 0), 2: ("eighth", 0), 3: ("eighth", 1), 4: ("quarter", 0)}),
-    ("straight", 3): (4, {1: ("eighth", 0), 2: ("quarter", 0)}),                       # triplet
-    ("compound", 3): (6, {1: ("eighth", 0), 2: ("quarter", 0), 3: ("quarter", 1)}),
-    ("compound", 6): (3, {1: ("16th", 0), 2: ("eighth", 0), 3: ("eighth", 1), 4: ("quarter", 0), 6: ("quarter", 1)}),
+    ("straight", 4): (6, {1: ("16th", 0), 2: ("eighth", 0), 3: ("eighth", 1), 4: ("quarter", 0)}),
+    ("straight", 3): (8, {1: ("eighth", 0), 2: ("quarter", 0)}),                       # triplet
+    ("straight", 8): (3, {1: ("32nd", 0), 2: ("16th", 0), 3: ("16th", 1), 4: ("eighth", 0), 6: ("eighth", 1),
+                          8: ("quarter", 0)}),
+    ("compound", 3): (12, {1: ("eighth", 0), 2: ("quarter", 0), 3: ("quarter", 1)}),
+    ("compound", 6): (6, {1: ("16th", 0), 2: ("eighth", 0), 3: ("eighth", 1), 4: ("quarter", 0), 6: ("quarter", 1)}),
+    ("compound", 12): (3, {1: ("32nd", 0), 2: ("16th", 0), 3: ("16th", 1), 4: ("eighth", 0), 6: ("eighth", 1),
+                           8: ("quarter", 0), 12: ("quarter", 1)}),
 }
 
 _KINDS = [  # suffix -> (MusicXML kind, text shown)
@@ -82,7 +86,7 @@ def _split(length: int, allowed: dict) -> list[int]:
 
 
 def _beat_xml(compound: bool, div: int, by_slot: dict[int, list[dict]]) -> str:
-    beat_div = 18 if compound else 12
+    beat_div = 36 if compound else 24
     if not by_slot:
         return _note(None, beat_div, "quarter", 1 if compound else 0, tm=False, beam=None, tup=None)
     unit, table = _TABLES[("compound" if compound else "straight", div)]
@@ -108,7 +112,7 @@ def _beat_xml(compound: bool, div: int, by_slot: dict[int, list[dict]]) -> str:
         run.clear()
 
     for i, (grp, ln) in enumerate(events):
-        if grp is not None and table[ln][0] in ("16th", "eighth"):
+        if grp is not None and table[ln][0] in ("32nd", "16th", "eighth"):
             run.append(i)
         else:
             close()
@@ -147,7 +151,7 @@ def chord_beats(chart: dict, derived: dict) -> dict[int, str]:
 
 def to_musicxml(chart: dict, derived: dict) -> str:
     bars, per_bar, compound = derived["bars"], derived["per_bar"], derived["compound"]
-    beat_div = 18 if compound else 12
+    beat_div = 36 if compound else 24
     title = chart.get("title") or "Untitled"
     used = sorted({n["d"] for n in derived["notes"] if n["d"] in NOTATION} or {"snare"}, key=DRUMS.index)
     cells: dict[int, dict[int, list[dict]]] = {}
